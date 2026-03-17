@@ -10,7 +10,7 @@ This project has 3 versions:
 2. **Userspace Program (Rust version)** - `rust_wi_bw_tool/`
 3. **Linux Kernel Patch** - `linux-patch/`
 
-> The Linux kernel patch is from [Jonathan Cameron](https://lore.kernel.org/linux-cxl/abLl84pc7tavuieW@gourry-fedora-PF4VCD3F/) and has been corrected by him.
+> The Linux kernel patch is from [Yee Li](https://lore.kernel.org/linux-cxl/20260312091207.2016518-1-seven.yi.lee@gmail.com/) and has been corrected by Jonathan.Cameron@huawei.com.
 
 ## Build
 

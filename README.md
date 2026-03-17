@@ -10,7 +10,7 @@ NUMA 加权交错内存策略管理工具。读取每个节点的带宽值，计
 2. **用户空间程序（Rust 语言版）** - `rust_wi_bw_tool/`
 3. **Linux 内核修改版** - `linux-patch/`
 
-> Linux 内核 patch 来自 [Jonathan Cameron](https://lore.kernel.org/linux-cxl/abLl84pc7tavuieW@gourry-fedora-PF4VCD3F/) 的提交，并经过其本人勘误。
+> Linux 内核 patch 来自 [Yee Li](https://lore.kernel.org/linux-cxl/20260312091207.2016518-1-seven.yi.lee@gmail.com/) 的提交，并经过Jonathan.Cameron@huawei.com勘误。
 
 ## 编译
 
