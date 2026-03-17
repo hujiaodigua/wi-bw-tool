@@ -2,6 +2,16 @@
 
 NUMA 加权交错内存策略管理工具。读取每个节点的带宽值，计算比例权重，并将其写入内核 sysfs 接口。
 
+## 版本
+
+本项目共有 3 个版本：
+
+1. **用户空间程序（C 语言版）** - `wi_bw_tool.c`
+2. **用户空间程序（Rust 语言版）** - `rust_wi_bw_tool/`
+3. **Linux 内核修改版** - `linux-patch/`
+
+> Linux 内核 patch 来自 [Jonathan Cameron](https://lore.kernel.org/linux-cxl/abLl84pc7tavuieW@gourry-fedora-PF4VCD3F/) 的提交，并经过其本人勘误。
+
 ## 编译
 
 ### 使用 Makefile（推荐）

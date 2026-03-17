@@ -2,6 +2,16 @@
 
 NUMA weighted interleave memory policy management tool. Reads bandwidth values for each node, calculates proportional weights, and writes them to the kernel sysfs interface.
 
+## Versions
+
+This project has 3 versions:
+
+1. **Userspace Program (C version)** - `wi_bw_tool.c`
+2. **Userspace Program (Rust version)** - `rust_wi_bw_tool/`
+3. **Linux Kernel Patch** - `linux-patch/`
+
+> The Linux kernel patch is from [Jonathan Cameron](https://lore.kernel.org/linux-cxl/abLl84pc7tavuieW@gourry-fedora-PF4VCD3F/) and has been corrected by him.
+
 ## Build
 
 ### Using Makefile (Recommended)

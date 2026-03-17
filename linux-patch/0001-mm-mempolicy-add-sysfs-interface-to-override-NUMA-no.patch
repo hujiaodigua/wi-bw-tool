@@ -1,0 +1,242 @@
+From 44dfa985c0e3442ca3d14ba228f17b1f945c3863 Mon Sep 17 00:00:00 2001
+From: yeeli <seven.yi.lee@gmail.com>
+Date: Fri, 13 Mar 2026 16:47:25 +0800
+Subject: [PATCH] mm/mempolicy: add sysfs interface to override NUMA node
+ bandwidth
+
+Automatic tuning for weighted interleaving [1] provides real benefits on
+systems with CXL support. However, platforms that lack HMAT or CDAT
+information cannot make use of this feature.
+
+If the bandwidth reported by firmware or the device deviates from the
+actual measured bandwidth, administrators also lack a clear way to adjust
+the per-node weight values.
+
+This patch introduces an optional Kconfig option,
+CONFIG_NUMA_BW_MANUAL_OVERRIDE (default n), which exposes node bandwidth
+R/W sysfs attributes under:
+
+  /sys/kernel/mm/mempolicy/weighted_interleave/bw_nodeN
+
+The sysfs files are created and removed dynamically on node hotplug
+events, in sync with the existing weighted_interleave/nodeN attributes.
+
+Userspace can write a single bandwidth value (in MB/s) to override both
+read_bandwidth and write_bandwidth for the corresponding NUMA node. The
+value is then propagated to the internal node_bw_table via
+mempolicy_set_node_perf().
+
+This interface is intended for debugging and experimentation only.
+
+[1] Link:
+https://lkml.kernel.org/r/20250505182328.4148265-1-joshua.hahnjy@gmail.com
+
+Signed-off-by: yeeli <seven.yi.lee@gmail.com>
+---
+ mm/Kconfig     |  20 ++++++++
+ mm/mempolicy.c | 134 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 154 insertions(+)
+
+diff --git a/mm/Kconfig b/mm/Kconfig
+index bd0ea5454af8..40554df18edc 100644
+--- a/mm/Kconfig
++++ b/mm/Kconfig
+@@ -1441,6 +1441,26 @@ config NUMA_EMU
+ 	  into virtual nodes when booted with "numa=fake=N", where N is the
+ 	  number of nodes. This is only useful for debugging.
+ 
++config NUMA_BW_MANUAL_OVERRIDE
++	bool "Allow manual override of per-NUMA-node bandwidth for weighted interleave"
++	depends on NUMA && SYSFS
++	default n
++	help
++	  This option exposes writable sysfs attributes under
++	  /sys/kernel/mm/mempolicy/weighted_interleave/bw_nodeN, allowing
++	  userspace to manually set read/write bandwidth values for each NUMA node.
++
++	  These values update the internal node_bw_table and can influence
++	  weighted interleave auto-tuning (if enabled).
++
++	  WARNING: This is intended for debugging, development, or platforms
++	  with incorrect HMAT/CDAT firmware data. Overriding hardware-reported
++	  bandwidth can lead to suboptimal performance, instability, or
++	  incorrect resource allocation decisions.
++
++	  Say N unless you are actively developing or debugging bandwidth-aware
++	  memory policies.
++
+ config ARCH_HAS_USER_SHADOW_STACK
+ 	bool
+ 	help
+diff --git a/mm/mempolicy.c b/mm/mempolicy.c
+index 68a98ba57882..9e90078b62aa 100644
+--- a/mm/mempolicy.c
++++ b/mm/mempolicy.c
+@@ -3614,6 +3614,9 @@ struct iw_node_attr {
+ struct sysfs_wi_group {
+ 	struct kobject wi_kobj;
+ 	struct mutex kobj_lock;
++#ifdef CONFIG_NUMA_BW_MANUAL_OVERRIDE
++	struct iw_node_attr *bw_attrs[MAX_NUMNODES];
++#endif
+ 	struct iw_node_attr *nattrs[];
+ };
+ 
+@@ -3855,6 +3858,125 @@ static int sysfs_wi_node_add(int nid)
+ 	return ret;
+ }
+ 
++#ifdef CONFIG_NUMA_BW_MANUAL_OVERRIDE
++static ssize_t bw_node_show(struct kobject *kobj,
++		struct kobj_attribute *attr, char *buf)
++{
++	struct iw_node_attr *node_attr =
++		container_of(attr, struct iw_node_attr, kobj_attr);
++
++	/* A node without either CDAT or HMAT */
++	if (!node_bw_table)
++		return sprintf(buf, "N/A\n");
++
++	if (!node_bw_table[node_attr->nid])
++		return sprintf(buf, "0\n");
++
++	return sprintf(buf, "%u(MB/s)\n", node_bw_table[node_attr->nid]);
++}
++
++static ssize_t bw_node_store(struct kobject *kobj,
++		struct kobj_attribute *attr, const char *buf, size_t count)
++{
++	int ret;
++	unsigned long val = 0;
++	struct access_coordinate coords = {
++		.read_bandwidth = 0,
++		.write_bandwidth = 0,
++	};
++	struct iw_node_attr *node_attr =
++		container_of(attr, struct iw_node_attr, kobj_attr);
++
++	ret = kstrtoul(buf, 0, &val);
++	if (ret)
++		return ret;
++
++	coords.read_bandwidth = val;
++	coords.write_bandwidth = val;
++
++	if (val > UINT_MAX)
++		return -EINVAL;
++
++	ret = mempolicy_set_node_perf(node_attr->nid, &coords);
++	if (ret)
++		return ret;
++
++	return count;
++}
++
++static int sysfs_bw_node_add(int nid)
++{
++	int ret;
++	char *name;
++	struct iw_node_attr *new_attr;
++
++	if (nid < 0 || nid >= nr_node_ids) {
++		pr_err("invalid node id: %d\n", nid);
++		return -EINVAL;
++	}
++
++	new_attr = kzalloc(sizeof(*new_attr), GFP_KERNEL);
++	if (!new_attr)
++		return -ENOMEM;
++
++	name = kasprintf(GFP_KERNEL, "bw_node%d", nid);
++	if (!name) {
++		kfree(new_attr);
++		return -ENOMEM;
++	}
++
++	sysfs_attr_init(&new_attr->kobj_attr.attr);
++	new_attr->kobj_attr.attr.name = name;
++	new_attr->kobj_attr.attr.mode = 0644;
++	new_attr->kobj_attr.show = bw_node_show;
++	new_attr->kobj_attr.store = bw_node_store;
++	new_attr->nid = nid;
++
++	mutex_lock(&wi_group->kobj_lock);
++	if (wi_group->bw_attrs[nid]) {
++		ret = -EEXIST;
++		goto err_unlock;
++	}
++
++	ret = sysfs_create_file(&wi_group->wi_kobj, &new_attr->kobj_attr.attr);
++	if (ret)
++		goto err_unlock;
++
++	wi_group->bw_attrs[nid] = new_attr;
++	mutex_unlock(&wi_group->kobj_lock);
++	return 0;
++
++err_unlock:
++	mutex_unlock(&wi_group->kobj_lock);
++out:
++	kfree(new_attr->kobj_attr.attr.name);
++	kfree(new_attr);
++	return ret;
++}
++
++static void sysfs_bw_node_delete(int nid)
++{
++	struct iw_node_attr *attr;
++
++	if (nid < 0 || nid >= nr_node_ids)
++		return;
++
++	mutex_lock(&wi_group->kobj_lock);
++	attr = wi_group->bw_attrs[nid];
++
++	if (attr) {
++		sysfs_remove_file(&wi_group->wi_kobj, &attr->kobj_attr.attr);
++		kfree(attr->kobj_attr.attr.name);
++		kfree(attr);
++		wi_group->nattrs[nid] = NULL;
++	}
++	mutex_unlock(&wi_group->kobj_lock);
++}
++#else
++static inline int sysfs_bw_node_add(int nid) { return 0; }
++static inline void sysfs_bw_node_delete(int nid) {  }
++#endif
++
+ static int wi_node_notifier(struct notifier_block *nb,
+ 			       unsigned long action, void *data)
+ {
+@@ -3868,9 +3990,15 @@ static int wi_node_notifier(struct notifier_block *nb,
+ 		if (err)
+ 			pr_err("failed to add sysfs for node%d during hotplug: %d\n",
+ 			       nid, err);
++
++		err = sysfs_bw_node_add(nid);
++		if (err)
++			pr_err("failed to add sysfs bw_node%d: %d\n",
++			       nid, err);
+ 		break;
+ 	case NODE_REMOVED_LAST_MEMORY:
+ 		sysfs_wi_node_delete(nid);
++		sysfs_bw_node_delete(nid);
+ 		break;
+ 	}
+ 
+@@ -3906,6 +4034,12 @@ static int __init add_weighted_interleave_group(struct kobject *mempolicy_kobj)
+ 			       nid, err);
+ 			goto err_cleanup_kobj;
+ 		}
++
++		err = sysfs_bw_node_add(nid);
++		if (err) {
++			pr_err("failed to add sysfs bw_node%d during init: %d\n", nid, err);
++			goto err_cleanup_kobj;
++		}
+ 	}
+ 
+ 	hotplug_node_notifier(wi_node_notifier, DEFAULT_CALLBACK_PRI);
+-- 
+2.34.1
+
