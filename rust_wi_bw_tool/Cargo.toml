@@ -1,0 +1,10 @@
+[package]
+name = "wi_bw_tool"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "wi_bw_tool"
+path = "src/main.rs"
+
+[dependencies]
