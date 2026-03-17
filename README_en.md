@@ -19,6 +19,14 @@ make clean    # Clean build artifacts
 gcc -o wi_bw_tool wi_bw_tool.c -Wall -Wextra
 ```
 
+### Rust Version
+
+```bash
+cd rust_wi_bw_tool
+cargo build --release
+./target/release/wi_bw_tool
+```
+
 ## Usage
 
 ```bash

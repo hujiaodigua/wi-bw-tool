@@ -19,6 +19,14 @@ make clean    # 清理构建产物
 gcc -o wi_bw_tool wi_bw_tool.c -Wall -Wextra
 ```
 
+### Rust 版本
+
+```bash
+cd rust_wi_bw_tool
+cargo build --release
+./target/release/wi_bw_tool
+```
+
 ## 使用
 
 ```bash
